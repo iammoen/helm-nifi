@@ -1,16 +1,16 @@
-# Helm Chart for Apache Nifi
+# Helm Chart for Apache NiFi
 
 [![CircleCI](https://circleci.com/gh/cetic/helm-nifi.svg?style=svg)](https://circleci.com/gh/cetic/helm-nifi/tree/master) [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0) ![version](https://img.shields.io/github/tag/cetic/helm-nifi.svg?label=release)
 
 ## Introduction
 
-This [Helm](https://github.com/kubernetes/helm) chart installs [nifi](https://nifi.apache.org/) in a Kubernetes cluster.
+This [Helm](https://helm.sh/) chart installs [Apache NiFi](https://nifi.apache.org/) in a [Kubernetes](https://kubernetes.io/) cluster.
 
 ## Prerequisites
 
 - Kubernetes cluster 1.10+
 - Helm 3.0.0+
-- PV provisioner support in the underlying infrastructure.
+- [Persistent Volumes (PV)](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) provisioner support in the underlying infrastructure.
 
 ## Installation
 
@@ -23,26 +23,42 @@ helm repo update
 
 ### Configure the chart
 
-The following items can be set via `--set` flag during installation or configured by editing the `values.yaml` directly (need to download the chart first).
+The following items can be set via `--set` flag during installation or configured by editing the [`values.yaml`](values.yaml) file directly (need to download the chart first).
 
-#### Configure the way how to expose nifi service:
+#### Configure how to expose nifi service
 
 - **Ingress**: The ingress controller must be installed in the Kubernetes cluster.
 - **ClusterIP**: Exposes the service on a cluster-internal IP. Choosing this value makes the service only reachable from within the cluster.
 - **NodePort**: Exposes the service on each Node’s IP at a static port (the NodePort). You’ll be able to contact the NodePort service, from outside the cluster, by requesting `NodeIP:NodePort`.
 - **LoadBalancer**: Exposes the service externally using a cloud provider’s load balancer.
 
-#### Configure the way how to persistent data:
+#### Configure how to persist data
 
 - **Disable**: The data does not survive the termination of a pod.
-- **Persistent Volume Claim(default)**: A default `StorageClass` is needed in the Kubernetes cluster to dynamic provision the volumes. Specify another StorageClass in the `storageClass` or set `existingClaim` if you have already existing persistent volumes to use.
+- **Persistent Volume Claim(default)**: A default `StorageClass` is needed in the Kubernetes cluster to dynamically provision the volumes. Specify another StorageClass in the `storageClass` or set `existingClaim` if you have already existing persistent volumes to use.
 
-#### Configure authentication:
+#### Configure authentication
 
 - You first need a secure cluster which can be accomplished by enabling the built-in CA nifi-toolkit container (`ca.enabled` to true). By default, a secure nifi cluster uses certificate based authentication but you can optionally enable `ldap` or `oidc`. See the configuration section for more details.
 
 :warning: This feature is quite new. Please open an issue if you encounter a problem.
-We are currently working on the `ldap` authentication. Also, any help is welcome to add other authentication methods.
+It seems that versions from 0.6.1 include some bugs for authentications. Please use version 0.6.0 of the chart until it is fixed. 
+
+#### Use custom processors
+
+To add [custom processors](https://cwiki.apache.org/confluence/display/NIFI/Maven+Projects+for+Extensions#MavenProjectsforExtensions-MavenProcessorArchetype), the `values.yaml` file `nifi` section should contain the following options, where `CUSTOM_LIB_FOLDER` should be replaced by the path where the libs are:
+
+```yaml
+  extraVolumeMounts:
+    - name: mycustomlibs
+      mountPath: /opt/configuration_resources/custom_lib
+  extraVolumes: # this will create the volume from the directory
+    - name: mycustomlibs
+      hostPath:
+        path: "CUSTOM_LIB_FOLDER"
+  properties:
+    customLibPath: "/opt/configuration_resources/custom_lib"
+```
 
 ### Install the chart
 
@@ -57,7 +73,6 @@ helm install my-release cetic/nifi
 ```bash
 git clone https://github.com/cetic/helm-nifi.git nifi
 cd nifi
-helm repo add incubator https://kubernetes-charts-incubator.storage.googleapis.com
 helm repo update
 helm dep up
 helm install --name nifi .
@@ -81,13 +96,15 @@ The following table lists the configurable parameters of the nifi chart and the 
 | `replicaCount`                                                              | Number of nifi nodes                                                                                               | `1`                             |
 | **Image**                                                                   |
 | `image.repository`                                                          | nifi Image name                                                                                                    | `apache/nifi`                   |
-| `image.tag`                                                                 | nifi Image tag                                                                                                     | `1.11.4`                        |
+| `image.tag`                                                                 | nifi Image tag                                                                                                     | `1.12.1`                        |
 | `image.pullPolicy`                                                          | nifi Image pull policy                                                                                             | `IfNotPresent`                  |
 | `image.pullSecret`                                                          | nifi Image pull secret                                                                                             | `nil`                           |
 | **SecurityContext**                                                         |
 | `securityContext.runAsUser`                                                 | nifi Docker User                                                                                                   | `1000`                          |
 | `securityContext.fsGroup`                                                   | nifi Docker Group                                                                                                  | `1000`                          |
 | **sts**                                                                     |
+| `sts.serviceAccount.create`    | If true, a service account will be created and used by the statefulset | `false` |
+| `sts.serviceAccount.name`       | When set, the set name will be used as the service account name. If a value is not provided a name will be generated based on Chart options | `nil` |
 | `sts.podManagementPolicy`                                                   | Parallel podManagementPolicy                                                                                       | `Parallel`                      |
 | `sts.AntiAffinity`                                                          | Affinity for pod assignment                                                                                        | `soft`                          |
 | `sts.pod.annotations`                                                       | Pod template annotations                                                                                           | `security.alpha.kubernetes.io/sysctls: net.ipv4.ip_local_port_range=10000 65000`                          |
@@ -108,6 +125,7 @@ The following table lists the configurable parameters of the nifi chart and the 
 | `properties.siteToSite.port`                                                | Site to Site properties Secure port                                                                                | `10000`                         |
 | `properties.siteToSite.authorizer`                                          |                                                                                                                    | `managed-authorizer`            |
 | `properties.safetyValve`                                                    | Map of explicit 'property: value' pairs that overwrite other configuration                                         | `nil`                           |
+| `properties.customLibPath`                                                  | Path of the custom libraries folder                                                                                | `nil`                           |
 | **nifi user authentication**                                                |
 | `auth.admin`                                                                | Default admin identity                                                                                             | ` CN=admin, OU=NIFI`            |
 | `auth.ldap.enabled`                                                         | Enable User auth via ldap                                                                                          | `false`                         |
@@ -174,8 +192,14 @@ The following table lists the configurable parameters of the nifi chart and the 
 | `extraVolumeMounts`                                                         | VolumeMounts for the nifi-server container (see [spec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#volumemount-v1-core) for details)  | `[]`                            |
 | **env**                                                                     |
 | `env`                                                                       | Additional environment variables for the nifi-container (see [spec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#envvar-v1-core) for details)  | `[]`                            |
+| `envFrom`                                                                       | Additional environment variables for the nifi-container from config-maps or secrets (see [spec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#envfromsource-v1-core) for details)  | `[]`                            |
 | **extraContainers**                                                         |
 | `extraContainers`                                                           | Additional container-specifications that should run within the pod (see [spec](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#container-v1-core) for details)  | `[]`                            |
+| **openshift**                                                                     |
+| `openshift.scc.enabled`                                                     | If true, a openshift security context will be created permitting to run the statefulset as AnyUID | `false` |
+| `openshift.route.enabled`                                                   | If true, a openshift route will be created. This option cannot be used together with Ingress as a route object replaces the Ingress. The property `properties.externalSecure` will configure the route in edge termination mode, the default is passthrough. The property `properties.httpsPort` has to be set if the cluster is intended to work with SSL termination | `false` |
+| `openshift.route.host`                                                      | The hostname intended to be used in order to access NiFi web interface | `nil` |
+| `openshift.route.path`                                                      | Path to access frontend, works the same way as the ingress path option | `nil` |
 | **zookeeper**                                                               |
 | `zookeeper.enabled`                                                         | If true, deploy Zookeeper                                                                                          | `true`                          |
 | `zookeeper.url`                                                             | If the Zookeeper Chart is disabled a URL and port are required to connect                                          | `nil`                           |
@@ -190,6 +214,9 @@ The following table lists the configurable parameters of the nifi chart and the 
 | `ca.port`                                                                   | CA server port number                                          | `9090`                            |
 | `ca.token`                                                                  | The token to use to prevent MITM                                          | `80`                            |
 | `ca.admin.cn`                                                               | CN for admin certificate                                          | `admin`                            |
+| `ca.serviceAccount.create`                                                 | If true, a service account will be created and used by the deployment                                         | `false`                            |
+| `ca.serviceAccount.name`                                                 |When set, the set name will be used as the service account name. If a value is not provided a name will be generated based on Chart options | `nil` |
+| `ca.openshift.scc.enabled`                                                     | If true, an openshift security context will be created permitting to run the deployment as AnyUID | `false` |
 
 ## Credits
 

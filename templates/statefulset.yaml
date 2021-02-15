@@ -31,6 +31,7 @@ spec:
         release: {{ .Release.Name | quote }}
         heritage: {{ .Release.Service | quote }}
     spec:
+      serviceAccountName: {{ include "apache-nifi.serviceAccountName" . }}
       {{- if eq .Values.sts.AntiAffinity "hard"}}
       affinity:
         podAntiAffinity:
@@ -50,7 +51,7 @@ spec:
                podAffinityTerm:
                  labelSelector:
                     matchExpressions:
-                      - key: "component"
+                      - key: "app"
                         operator: In
                         values:
                          - {{ include "apache-nifi.name" . | quote }}
@@ -136,6 +137,7 @@ spec:
 
           openssl pkcs12 -in "keystore.pkcs12" -out "key.pem" -nocerts -nodes -password "env:PASS"
           openssl pkcs12 -in "keystore.pkcs12" -out "crt.pem" -clcerts -nokeys -password "env:PASS"
+          openssl pkcs12 -in "keystore.pkcs12" -out "keystore.jks" -clcerts -nokeys -password "env:PASS"
         volumeMounts:
           - name: "config-data"
             mountPath: /data/config-data
@@ -149,6 +151,9 @@ spec:
         - name: {{ .Values.image.pullSecret }}
       {{- end }}
       containers:
+{{- if .Values.extraContainers }}
+{{- toYaml .Values.extraContainers | nindent 6 }}
+{{- end }}
       - name: server
         imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -177,20 +182,23 @@ spec:
             cat "${NIFI_HOME}/conf/authorizers.empty" > "${NIFI_HOME}/conf/authorizers.xml"
           fi
 
-          # if ! test -f /opt/nifi/data/flow.xml.gz && test -f /opt/nifi/data/flow.xml; then
-          #   gzip /opt/nifi/data/flow.xml
-          # fi
+          if ! test -f /opt/nifi/data/flow.xml.gz && test -f /opt/nifi/data/flow.xml; then
+            gzip /opt/nifi/data/flow.xml
+          fi
 
           prop_replace nifi.remote.input.host ${FQDN}
           prop_replace nifi.cluster.node.address ${FQDN}
           prop_replace nifi.zookeeper.connect.string ${NIFI_ZOOKEEPER_CONNECT_STRING}
 
+{{- if .Values.auth.oidc.enabled }}
 {{- if .Values.properties.clusterSecure }}
           # Update nifi.properties for security properties
           prop_replace nifi.web.https.host ${FQDN}
+          prop_replace nifi.security.keystoreType jks
           prop_replace nifi.security.keystore   ${NIFI_HOME}/config-data/certs/keystore.jks
           prop_replace nifi.security.keystorePasswd     $(jq -r .keyStorePassword ${NIFI_HOME}/config-data/certs/config.json)
           prop_replace nifi.security.keyPasswd          $(jq -r .keyPassword ${NIFI_HOME}/config-data/certs/config.json)
+          prop_replace nifi.security.truststoreType jks
           prop_replace nifi.security.truststore   ${NIFI_HOME}/config-data/certs/truststore.jks
           prop_replace nifi.security.truststorePasswd   $(jq -r .trustStorePassword ${NIFI_HOME}/config-data/certs/config.json)
 
@@ -210,6 +218,8 @@ spec:
           prop_replace {{ $prop }} "{{ $val }}" nifi.properties
   {{- end }}
 {{- end }}
+{{- end }}
+
 
           exec bin/nifi.sh run & nifi_pid="$!"
 
@@ -269,6 +279,10 @@ spec:
 
           echo NiFi running with PID ${nifi_pid}.
           wait ${nifi_pid}
+          {{ if .Values.auth.ldap }}
+          /opt/nifi/nifi-toolkit-current/bin/tls-toolkit.sh standalone -n '{{.Release.Name}}-nifi-0.{{.Release.Name}}-nifi-headless.{{.Release.Namespace}}.svc.cluster.local' -C '{{.Values.auth.ldap.admin}}' -o '/opt/nifi/nifi-current/conf/' -P {{.Values.auth.SSL.truststorePasswd}}  -S {{.Values.auth.SSL.keystorePasswd}}  --nifiPropertiesFile /opt/nifi/nifi-current/conf/nifi.properties
+          exec bin/nifi.sh run
+          {{ end }}
         resources:
 {{ toYaml .Values.resources | indent 10 }}
         ports:
@@ -279,8 +293,7 @@ spec:
 {{- end }}
           name: https
           protocol: TCP
-{{- end }}
-{{- if .Values.properties.httpPort }}
+{{- else }}
         - containerPort: {{ .Values.properties.httpPort }}
           name: http
           protocol: TCP
@@ -295,6 +308,10 @@ spec:
 {{ toYaml .Values.env | indent 8 }}
 {{- end }}
 {{- if .Values.postStart }}
+{{- if .Values.envFrom }}
+        envFrom:
+{{ toYaml .Values.envFrom | indent 8 }}
+{{- end }}
         lifecycle:
           postStart:
             exec:
@@ -373,9 +390,6 @@ spec:
           - name: "bootstrap-notification-services-xml"
             mountPath: /opt/nifi/nifi-current/conf/bootstrap-notification-services.xml
             subPath: "bootstrap-notification-services.xml"
-          - name: "logback-xml"
-            mountPath: /opt/nifi/nifi-current/conf/logback.xml
-            subPath: "logback.xml"
           - name: "login-identity-providers-xml"
             mountPath: /opt/nifi/nifi-current/conf/login-identity-providers.xml
             subPath: "login-identity-providers.xml"
@@ -478,12 +492,6 @@ spec:
           items:
             - key: "bootstrap-notification-services.xml"
               path: "bootstrap-notification-services.xml"
-      - name: "logback-xml"
-        configMap:
-          name: {{ template "apache-nifi.fullname" . }}-config
-          items:
-            - key: "logback.xml"
-              path: "logback.xml"
       - name: "login-identity-providers-xml"
         configMap:
           name: {{ template "apache-nifi.fullname" . }}-config
